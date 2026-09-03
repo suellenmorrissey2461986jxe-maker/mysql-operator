@@ -1,0 +1,9 @@
+apiVersion: database.ops.example.com/v1alpha1
+kind: MySQL
+metadata:
+  labels:
+    app.kubernetes.io/name: mysql-operator
+    app.kubernetes.io/managed-by: kustomize
+  name: mysql-sample
+spec:
+  # TODO(user): Add fields here
