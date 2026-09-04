@@ -18,6 +18,8 @@ package controller
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"fmt"
 	"reflect"
 
@@ -47,6 +49,7 @@ type MySQLReconciler struct {
 // +kubebuilder:rbac:groups=database.ops.example.com,resources=mysqls/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=database.ops.example.com,resources=mysqls/finalizers,verbs=update
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete
 
 func (r *MySQLReconciler) Reconcile(
 	ctx context.Context,
@@ -63,6 +66,74 @@ func (r *MySQLReconciler) Reconcile(
 
 		logger.Error(err, "Failed to get MySQL resource")
 		return ctrl.Result{}, err
+	}
+
+	secretName := mysql.Name + "-credentials"
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      secretName,
+			Namespace: mysql.Namespace,
+		},
+	}
+
+	secretOperation, err := controllerutil.CreateOrUpdate(
+		ctx,
+		r.Client,
+		secret,
+		func() error {
+			if !secret.CreationTimestamp.IsZero() &&
+				!metav1.IsControlledBy(secret, mysql) {
+				return fmt.Errorf(
+					"secret %s/%s already exists and is not controlled by MySQL",
+					secret.Namespace,
+					secret.Name,
+				)
+			}
+
+			if err := controllerutil.SetControllerReference(
+				mysql,
+				secret,
+				r.Scheme,
+			); err != nil {
+				return err
+			}
+
+			secret.Labels = map[string]string{
+				"app.kubernetes.io/name":       mysqlName,
+				"app.kubernetes.io/instance":   mysql.Name,
+				"app.kubernetes.io/managed-by": "mysql-operator",
+			}
+			secret.Type = corev1.SecretTypeOpaque
+
+			if secret.Data == nil {
+				secret.Data = map[string][]byte{}
+			}
+
+			if len(secret.Data["root-password"]) == 0 {
+				password, err := generatePassword(24)
+				if err != nil {
+					return err
+				}
+				secret.Data["root-password"] = []byte(password)
+			}
+
+			return nil
+		},
+	)
+	if err != nil {
+		logger.Error(err, "Failed to reconcile MySQL credentials Secret")
+		return ctrl.Result{}, err
+	}
+
+	if secretOperation != controllerutil.OperationResultNone {
+		logger.Info(
+			"Reconciled MySQL credentials Secret",
+			"operation", secretOperation,
+			"secret", types.NamespacedName{
+				Name:      secret.Name,
+				Namespace: secret.Namespace,
+			},
+		)
 	}
 
 	deployment := &appsv1.Deployment{
@@ -130,9 +201,15 @@ func (r *MySQLReconciler) Reconcile(
 							Value: mysql.Spec.DatabaseName,
 						},
 						{
-							// 仅用于当前学习实验，后续将替换为 Secret。
-							Name:  "MYSQL_ALLOW_EMPTY_PASSWORD",
-							Value: "yes",
+							Name: "MYSQL_ROOT_PASSWORD",
+							ValueFrom: &corev1.EnvVarSource{
+								SecretKeyRef: &corev1.SecretKeySelector{
+									LocalObjectReference: corev1.LocalObjectReference{
+										Name: secretName,
+									},
+									Key: "root-password",
+								},
+							},
 						},
 					},
 				},
@@ -233,11 +310,21 @@ func (r *MySQLReconciler) updateStatus(
 	return ctrl.Result{}, nil
 }
 
+func generatePassword(byteLength int) (string, error) {
+	randomBytes := make([]byte, byteLength)
+	if _, err := rand.Read(randomBytes); err != nil {
+		return "", fmt.Errorf("generate random password: %w", err)
+	}
+
+	return base64.RawURLEncoding.EncodeToString(randomBytes), nil
+}
+
 // SetupWithManager sets up the controller with the Manager.
 func (r *MySQLReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&databasev1alpha1.MySQL{}).
 		Owns(&appsv1.Deployment{}).
+		Owns(&corev1.Secret{}).
 		Named(mysqlName).
 		Complete(r)
 }

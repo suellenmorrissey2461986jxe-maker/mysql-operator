@@ -20,6 +20,7 @@ import (
 	"context"
 
 	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -98,6 +99,40 @@ var _ = Describe("MySQL Controller", func() {
 			By("Checking the Deployment created by the reconciler")
 			deployment := &appsv1.Deployment{}
 			Expect(k8sClient.Get(ctx, typeNamespacedName, deployment)).To(Succeed())
+
+			By("Checking the credentials Secret created by the reconciler")
+			secretName := resourceName + "-credentials"
+			secretNamespacedName := types.NamespacedName{
+				Name:      secretName,
+				Namespace: resourceNamespace,
+			}
+			secret := &corev1.Secret{}
+			Expect(k8sClient.Get(ctx, secretNamespacedName, secret)).To(Succeed())
+
+			originalPassword := append(
+				[]byte(nil),
+				secret.Data["root-password"]...,
+			)
+			Expect(originalPassword).NotTo(BeEmpty())
+			Expect(metav1.IsControlledBy(secret, updated)).To(BeTrue())
+
+			By("Checking that the Deployment references the credentials Secret")
+			Expect(deployment.Spec.Template.Spec.Containers).To(HaveLen(1))
+
+			var rootPasswordEnv *corev1.EnvVar
+			for index := range deployment.Spec.Template.Spec.Containers[0].Env {
+				env := &deployment.Spec.Template.Spec.Containers[0].Env[index]
+				if env.Name == "MYSQL_ROOT_PASSWORD" {
+					rootPasswordEnv = env
+					break
+				}
+			}
+
+			Expect(rootPasswordEnv).NotTo(BeNil())
+			Expect(rootPasswordEnv.ValueFrom).NotTo(BeNil())
+			Expect(rootPasswordEnv.ValueFrom.SecretKeyRef).NotTo(BeNil())
+			Expect(rootPasswordEnv.ValueFrom.SecretKeyRef.Name).To(Equal(secretName))
+			Expect(rootPasswordEnv.ValueFrom.SecretKeyRef.Key).To(Equal("root-password"))
 			Expect(deployment.Spec.Replicas).NotTo(BeNil())
 			Expect(*deployment.Spec.Replicas).To(Equal(int32(1)))
 			Expect(deployment.Spec.Template.Spec.Containers).To(HaveLen(1))
@@ -114,6 +149,15 @@ var _ = Describe("MySQL Controller", func() {
 			stableDeployment := &appsv1.Deployment{}
 			Expect(k8sClient.Get(ctx, typeNamespacedName, stableDeployment)).To(Succeed())
 			Expect(stableDeployment.ResourceVersion).To(Equal(deploymentResourceVersion))
+
+			By("Checking that a second reconcile preserves the root password")
+			stableSecret := &corev1.Secret{}
+			Expect(k8sClient.Get(
+				ctx,
+				secretNamespacedName,
+				stableSecret,
+			)).To(Succeed())
+			Expect(stableSecret.Data["root-password"]).To(Equal(originalPassword))
 		})
 	})
 })
