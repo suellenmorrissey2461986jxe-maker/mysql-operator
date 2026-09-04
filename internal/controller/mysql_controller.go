@@ -28,6 +28,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -52,6 +53,7 @@ type MySQLReconciler struct {
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=persistentvolumeclaims,verbs=get;list;watch;create;update;patch;delete
 
 func (r *MySQLReconciler) Reconcile(
 	ctx context.Context,
@@ -138,6 +140,74 @@ func (r *MySQLReconciler) Reconcile(
 		)
 	}
 
+	storageSize := mysql.Spec.StorageSize.DeepCopy()
+	if storageSize.IsZero() {
+		storageSize = resource.MustParse("1Gi")
+	}
+
+	pvcName := mysql.Name + "-data"
+	pvc := &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      pvcName,
+			Namespace: mysql.Namespace,
+		},
+	}
+
+	pvcOperation, err := controllerutil.CreateOrUpdate(
+		ctx,
+		r.Client,
+		pvc,
+		func() error {
+			if !pvc.CreationTimestamp.IsZero() &&
+				!metav1.IsControlledBy(pvc, mysql) {
+				return fmt.Errorf(
+					"persistentvolumeclaim %s/%s already exists and is not controlled by MySQL",
+					pvc.Namespace,
+					pvc.Name,
+				)
+			}
+
+			if err := controllerutil.SetControllerReference(
+				mysql,
+				pvc,
+				r.Scheme,
+			); err != nil {
+				return err
+			}
+
+			pvc.Labels = map[string]string{
+				"app.kubernetes.io/name":       mysqlName,
+				"app.kubernetes.io/instance":   mysql.Name,
+				"app.kubernetes.io/managed-by": "mysql-operator",
+			}
+			pvc.Spec.AccessModes = []corev1.PersistentVolumeAccessMode{
+				corev1.ReadWriteOnce,
+			}
+			pvc.Spec.Resources = corev1.VolumeResourceRequirements{
+				Requests: corev1.ResourceList{
+					corev1.ResourceStorage: storageSize,
+				},
+			}
+
+			return nil
+		},
+	)
+	if err != nil {
+		logger.Error(err, "Failed to reconcile MySQL data PVC")
+		return ctrl.Result{}, err
+	}
+
+	if pvcOperation != controllerutil.OperationResultNone {
+		logger.Info(
+			"Reconciled MySQL data PVC",
+			"operation", pvcOperation,
+			"pvc", types.NamespacedName{
+				Name:      pvc.Name,
+				Namespace: pvc.Namespace,
+			},
+		)
+	}
+
 	deployment := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      mysql.Name,
@@ -183,6 +253,16 @@ func (r *MySQLReconciler) Reconcile(
 				MatchLabels: selectorLabels,
 			}
 			deployment.Spec.Template.Labels = selectorLabels
+			deployment.Spec.Template.Spec.Volumes = []corev1.Volume{
+				{
+					Name: "data",
+					VolumeSource: corev1.VolumeSource{
+						PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+							ClaimName: pvcName,
+						},
+					},
+				},
+			}
 			deployment.Spec.Template.Spec.Containers = []corev1.Container{
 				{
 					Name:                     mysqlName,
@@ -195,6 +275,12 @@ func (r *MySQLReconciler) Reconcile(
 							Name:          mysqlName,
 							ContainerPort: 3306,
 							Protocol:      corev1.ProtocolTCP,
+						},
+					},
+					VolumeMounts: []corev1.VolumeMount{
+						{
+							Name:      "data",
+							MountPath: "/var/lib/mysql",
 						},
 					},
 					Env: []corev1.EnvVar{
@@ -394,6 +480,7 @@ func (r *MySQLReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&databasev1alpha1.MySQL{}).
 		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.Secret{}).
+		Owns(&corev1.PersistentVolumeClaim{}).
 		Owns(&corev1.Service{}).
 		Named(mysqlName).
 		Complete(r)
