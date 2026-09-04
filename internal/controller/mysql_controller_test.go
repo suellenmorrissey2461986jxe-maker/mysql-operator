@@ -140,6 +140,28 @@ var _ = Describe("MySQL Controller", func() {
 			Expect(metav1.IsControlledBy(deployment, updated)).To(BeTrue())
 
 			By("Reconciling again without changing the desired state")
+			By("Checking the Service created by the reconciler")
+			service := &corev1.Service{}
+			Expect(k8sClient.Get(
+				ctx,
+				typeNamespacedName,
+				service,
+			)).To(Succeed())
+
+			Expect(service.Spec.Type).To(Equal(corev1.ServiceTypeClusterIP))
+			Expect(service.Spec.Selector).To(Equal(map[string]string{
+				"app.kubernetes.io/name":     mysqlName,
+				"app.kubernetes.io/instance": resourceName,
+			}))
+			Expect(service.Spec.Ports).To(HaveLen(1))
+			Expect(service.Spec.Ports[0].Name).To(Equal(mysqlName))
+			Expect(service.Spec.Ports[0].Protocol).To(Equal(corev1.ProtocolTCP))
+			Expect(service.Spec.Ports[0].Port).To(Equal(int32(3306)))
+			Expect(service.Spec.Ports[0].TargetPort.IntVal).To(Equal(int32(3306)))
+			Expect(metav1.IsControlledBy(service, updated)).To(BeTrue())
+
+			serviceResourceVersion := service.ResourceVersion
+
 			deploymentResourceVersion := deployment.ResourceVersion
 			_, err = controllerReconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: typeNamespacedName,
@@ -149,6 +171,16 @@ var _ = Describe("MySQL Controller", func() {
 			stableDeployment := &appsv1.Deployment{}
 			Expect(k8sClient.Get(ctx, typeNamespacedName, stableDeployment)).To(Succeed())
 			Expect(stableDeployment.ResourceVersion).To(Equal(deploymentResourceVersion))
+
+			By("Checking that the Service remains unchanged")
+			stableService := &corev1.Service{}
+			Expect(k8sClient.Get(
+				ctx,
+				typeNamespacedName,
+				stableService,
+			)).To(Succeed())
+			Expect(stableService.ResourceVersion).To(Equal(serviceResourceVersion))
+			Expect(stableService.Spec.ClusterIP).To(Equal(service.Spec.ClusterIP))
 
 			By("Checking that a second reconcile preserves the root password")
 			stableSecret := &corev1.Secret{}

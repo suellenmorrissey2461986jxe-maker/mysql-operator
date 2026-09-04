@@ -31,6 +31,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -50,6 +51,7 @@ type MySQLReconciler struct {
 // +kubebuilder:rbac:groups=database.ops.example.com,resources=mysqls/finalizers,verbs=update
 // +kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
 
 func (r *MySQLReconciler) Reconcile(
 	ctx context.Context,
@@ -234,6 +236,73 @@ func (r *MySQLReconciler) Reconcile(
 		)
 	}
 
+	service := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      mysql.Name,
+			Namespace: mysql.Namespace,
+		},
+	}
+
+	serviceOperation, err := controllerutil.CreateOrUpdate(
+		ctx,
+		r.Client,
+		service,
+		func() error {
+			if !service.CreationTimestamp.IsZero() &&
+				!metav1.IsControlledBy(service, mysql) {
+				return fmt.Errorf(
+					"service %s/%s already exists and is not controlled by MySQL",
+					service.Namespace,
+					service.Name,
+				)
+			}
+
+			if err := controllerutil.SetControllerReference(
+				mysql,
+				service,
+				r.Scheme,
+			); err != nil {
+				return err
+			}
+
+			service.Labels = map[string]string{
+				"app.kubernetes.io/name":       mysqlName,
+				"app.kubernetes.io/instance":   mysql.Name,
+				"app.kubernetes.io/managed-by": "mysql-operator",
+			}
+			service.Spec.Type = corev1.ServiceTypeClusterIP
+			service.Spec.Selector = map[string]string{
+				"app.kubernetes.io/name":     mysqlName,
+				"app.kubernetes.io/instance": mysql.Name,
+			}
+			service.Spec.Ports = []corev1.ServicePort{
+				{
+					Name:       mysqlName,
+					Protocol:   corev1.ProtocolTCP,
+					Port:       3306,
+					TargetPort: intstr.FromInt32(3306),
+				},
+			}
+
+			return nil
+		},
+	)
+	if err != nil {
+		logger.Error(err, "Failed to reconcile MySQL Service")
+		return ctrl.Result{}, err
+	}
+
+	if serviceOperation != controllerutil.OperationResultNone {
+		logger.Info(
+			"Reconciled MySQL Service",
+			"operation", serviceOperation,
+			"service", types.NamespacedName{
+				Name:      service.Name,
+				Namespace: service.Namespace,
+			},
+		)
+	}
+
 	readyReplicas := deployment.Status.ReadyReplicas
 	phase := "Creating"
 	conditionStatus := metav1.ConditionFalse
@@ -325,6 +394,7 @@ func (r *MySQLReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&databasev1alpha1.MySQL{}).
 		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.Secret{}).
+		Owns(&corev1.Service{}).
 		Named(mysqlName).
 		Complete(r)
 }
