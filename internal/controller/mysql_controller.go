@@ -265,6 +265,12 @@ func (r *MySQLReconciler) Reconcile(
 					},
 				},
 			}
+			mysqlAdminCommand := []string{
+				"sh",
+				"-c",
+				`MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysqladmin ping -h 127.0.0.1 -uroot --silent`,
+			}
+
 			deployment.Spec.Template.Spec.Containers = []corev1.Container{
 				{
 					Name:                     mysqlName,
@@ -278,6 +284,36 @@ func (r *MySQLReconciler) Reconcile(
 							ContainerPort: 3306,
 							Protocol:      corev1.ProtocolTCP,
 						},
+					},
+					StartupProbe: &corev1.Probe{
+						ProbeHandler: corev1.ProbeHandler{
+							Exec: &corev1.ExecAction{
+								Command: mysqlAdminCommand,
+							},
+						},
+						PeriodSeconds:    5,
+						TimeoutSeconds:   2,
+						FailureThreshold: 30,
+					},
+					ReadinessProbe: &corev1.Probe{
+						ProbeHandler: corev1.ProbeHandler{
+							Exec: &corev1.ExecAction{
+								Command: mysqlAdminCommand,
+							},
+						},
+						PeriodSeconds:    5,
+						TimeoutSeconds:   2,
+						FailureThreshold: 3,
+					},
+					LivenessProbe: &corev1.Probe{
+						ProbeHandler: corev1.ProbeHandler{
+							Exec: &corev1.ExecAction{
+								Command: mysqlAdminCommand,
+							},
+						},
+						PeriodSeconds:    10,
+						TimeoutSeconds:   2,
+						FailureThreshold: 3,
 					},
 					VolumeMounts: []corev1.VolumeMount{
 						{

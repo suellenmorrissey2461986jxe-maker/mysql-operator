@@ -177,6 +177,33 @@ var _ = Describe("MySQL Controller", func() {
 			).To(Equal(pvcName))
 
 			container := deployment.Spec.Template.Spec.Containers[0]
+			By("Checking the MySQL health probes")
+			expectedProbeCommand := []string{
+				"sh",
+				"-c",
+				`MYSQL_PWD="$MYSQL_ROOT_PASSWORD" mysqladmin ping -h 127.0.0.1 -uroot --silent`,
+			}
+
+			Expect(container.StartupProbe).NotTo(BeNil())
+			Expect(container.StartupProbe.Exec).NotTo(BeNil())
+			Expect(container.StartupProbe.Exec.Command).To(Equal(expectedProbeCommand))
+			Expect(container.StartupProbe.PeriodSeconds).To(Equal(int32(5)))
+			Expect(container.StartupProbe.TimeoutSeconds).To(Equal(int32(2)))
+			Expect(container.StartupProbe.FailureThreshold).To(Equal(int32(30)))
+
+			Expect(container.ReadinessProbe).NotTo(BeNil())
+			Expect(container.ReadinessProbe.Exec).NotTo(BeNil())
+			Expect(container.ReadinessProbe.Exec.Command).To(Equal(expectedProbeCommand))
+			Expect(container.ReadinessProbe.PeriodSeconds).To(Equal(int32(5)))
+			Expect(container.ReadinessProbe.TimeoutSeconds).To(Equal(int32(2)))
+			Expect(container.ReadinessProbe.FailureThreshold).To(Equal(int32(3)))
+
+			Expect(container.LivenessProbe).NotTo(BeNil())
+			Expect(container.LivenessProbe.Exec).NotTo(BeNil())
+			Expect(container.LivenessProbe.Exec.Command).To(Equal(expectedProbeCommand))
+			Expect(container.LivenessProbe.PeriodSeconds).To(Equal(int32(10)))
+			Expect(container.LivenessProbe.TimeoutSeconds).To(Equal(int32(2)))
+			Expect(container.LivenessProbe.FailureThreshold).To(Equal(int32(3)))
 			Expect(container.VolumeMounts).To(HaveLen(1))
 			Expect(container.VolumeMounts[0].Name).To(Equal("data"))
 			Expect(container.VolumeMounts[0].MountPath).To(Equal(
