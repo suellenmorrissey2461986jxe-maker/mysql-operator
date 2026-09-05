@@ -157,6 +157,10 @@ var _ = Describe("MySQL Controller", func() {
 			Expect(rootPasswordEnv.ValueFrom.SecretKeyRef.Key).To(Equal("root-password"))
 			Expect(deployment.Spec.Replicas).NotTo(BeNil())
 			Expect(*deployment.Spec.Replicas).To(Equal(int32(1)))
+			Expect(deployment.Spec.Strategy.Type).To(Equal(
+				appsv1.RecreateDeploymentStrategyType,
+			))
+			Expect(deployment.Spec.Strategy.RollingUpdate).To(BeNil())
 			Expect(deployment.Spec.Template.Spec.Containers).To(HaveLen(1))
 			Expect(deployment.Spec.Template.Spec.Containers[0].Image).To(Equal("mysql:8.4"))
 			Expect(metav1.IsControlledBy(deployment, updated)).To(BeTrue())

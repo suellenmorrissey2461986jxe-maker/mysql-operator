@@ -249,6 +249,8 @@ func (r *MySQLReconciler) Reconcile(
 			}
 
 			deployment.Spec.Replicas = &mysql.Spec.Replicas
+			deployment.Spec.Strategy.Type = appsv1.RecreateDeploymentStrategyType
+			deployment.Spec.Strategy.RollingUpdate = nil
 			deployment.Spec.Selector = &metav1.LabelSelector{
 				MatchLabels: selectorLabels,
 			}
