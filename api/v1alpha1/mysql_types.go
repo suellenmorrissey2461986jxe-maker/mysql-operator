@@ -39,9 +39,10 @@ type MySQLSpec struct {
 	Image string `json:"image,omitempty"`
 
 	// Replicas is the desired number of MySQL Pods.
+	// The current single-instance architecture supports exactly one replica.
 	// +optional
 	// +kubebuilder:validation:Minimum=1
-	// +kubebuilder:validation:Maximum=3
+	// +kubebuilder:validation:Maximum=1
 	// +kubebuilder:default=1
 	Replicas int32 `json:"replicas,omitempty"`
 

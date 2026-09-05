@@ -68,9 +68,11 @@ spec:
                 type: string
               replicas:
                 default: 1
-                description: Replicas is the desired number of MySQL Pods.
+                description: |-
+                  Replicas is the desired number of MySQL Pods.
+                  The current single-instance architecture supports exactly one replica.
                 format: int32
-                maximum: 3
+                maximum: 1
                 minimum: 1
                 type: integer
               storageSize:
