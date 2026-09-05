@@ -1,11 +1,23 @@
-# More info: https://docs.docker.com/engine/reference/builder/#dockerignore-file
-# Ignore everything by default and re-include only needed files
+# Ignore everything by default
 **
 
-# Re-include Go source files (but not *_test.go)
-!**/*.go
-**/*_test.go
-
-# Re-include Go module files
+# Go module files
 !go.mod
 !go.sum
+
+# Main package
+!cmd/
+!cmd/*.go
+
+# API package
+!api/
+!api/v1alpha1/
+!api/v1alpha1/*.go
+
+# Controller package
+!internal/
+!internal/controller/
+!internal/controller/*.go
+
+# Tests are not required when building the runtime binary
+**/*_test.go
